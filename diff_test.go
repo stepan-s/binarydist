@@ -2,6 +2,8 @@ package binarydist
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -22,46 +24,53 @@ var diffT = []struct {
 	},
 }
 
+func fatalForTest(t *testing.T, err error, msg string) {
+	t.Helper()
+	if err != nil {
+		t.Fatal("failed to", msg, err)
+	} else if testing.Verbose() {
+		t.Log("OK:", msg)
+	}
+}
+
 func TestDiff(t *testing.T) {
 	for _, s := range diffT {
-		got, err := ioutil.TempFile("/tmp", "bspatch.")
-		if err != nil {
-			panic(err)
-		}
-		os.Remove(got.Name())
+		patchFile, err := ioutil.TempFile("/tmp", "bspatch.")
+		fatalForTest(t, err, "create patch file")
 
-		exp, err := ioutil.TempFile("/tmp", "bspatch.")
-		if err != nil {
-			panic(err)
-		}
+		newFile, err := ioutil.TempFile("/tmp", "bspatch.new.")
+		fatalForTest(t, err, "create output file")
 
-		cmd := exec.Command("bsdiff", s.old.Name(), s.new.Name(), exp.Name())
-		cmd.Stdout = os.Stdout
-		err = cmd.Run()
-		os.Remove(exp.Name())
-		if err != nil {
-			panic(err)
-		}
+		newFileName := newFile.Name()
+		fatalForTest(t, newFile.Close(), "close output file")
 
-		err = Diff(s.old, s.new, got)
-		if err != nil {
-			t.Fatal("err", err)
-		}
+		err = Diff(s.old, s.new, patchFile)
+		fatalForTest(t, err, "compute diff")
+		fatalForTest(t, patchFile.Close(), "close patch file")
 
-		_, err = got.Seek(0, 0)
-		if err != nil {
-			panic(err)
-		}
-		gotBuf := mustReadAll(got)
-		expBuf := mustReadAll(exp)
+		hash := sha256.New()
+		_, err = s.new.Seek(0, 0)
+		fatalForTest(t, err, "seek to start of expected output")
+		_, err = io.Copy(hash, s.new)
+		fatalForTest(t, err, "compute expected hash")
+		expectSum := hash.Sum(nil)
 
-		if !bytes.Equal(gotBuf, expBuf) {
-			t.Fail()
-			t.Logf("diff %s %s", s.old.Name(), s.new.Name())
-			t.Logf("%s: len(got) = %d", got.Name(), len(gotBuf))
-			t.Logf("%s: len(exp) = %d", exp.Name(), len(expBuf))
-			i := matchlen(gotBuf, expBuf)
-			t.Logf("produced different output at pos %d; %d != %d", i, gotBuf[i], expBuf[i])
+		cmd := exec.Command("bspatch", s.old.Name(), newFileName, patchFile.Name())
+		cmd.Stderr = os.Stderr
+
+		fatalForTest(t, cmd.Run(), "execute bspatch")
+
+		newFile, err = os.Open(newFileName)
+		fatalForTest(t, err, "open output file")
+		hash.Reset()
+		_, err = io.Copy(hash, newFile)
+		fatalForTest(t, err, "hash contents of output file")
+
+		outSum := hash.Sum(nil)
+
+		if !bytes.Equal(expectSum, outSum) {
+			t.Errorf("the patched output file %q didn't match the expected output file %q",
+				newFile.Name(), s.new.Name())
 		}
 	}
 }
