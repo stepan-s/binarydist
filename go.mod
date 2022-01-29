@@ -1,4 +1,4 @@
-module github.com/Infomaker/binarydist
+module github.com/stepan-s/binarydist
 
 go 1.12
 
