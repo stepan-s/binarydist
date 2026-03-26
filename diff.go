@@ -7,149 +7,6 @@ import (
 	"io/ioutil"
 )
 
-func swap(a []int, i, j int) { a[i], a[j] = a[j], a[i] }
-
-func split(I, V []int, start, length, h int) {
-	var i, j, k, x, jj, kk int
-
-	if length < 16 {
-		for k = start; k < start+length; k += j {
-			j = 1
-			x = V[I[k]+h]
-			for i = 1; k+i < start+length; i++ {
-				if V[I[k+i]+h] < x {
-					x = V[I[k+i]+h]
-					j = 0
-				}
-				if V[I[k+i]+h] == x {
-					swap(I, k+i, k+j)
-					j++
-				}
-			}
-			for i = 0; i < j; i++ {
-				V[I[k+i]] = k + j - 1
-			}
-			if j == 1 {
-				I[k] = -1
-			}
-		}
-		return
-	}
-
-	x = V[I[start+length/2]+h]
-	jj = 0
-	kk = 0
-	for i = start; i < start+length; i++ {
-		if V[I[i]+h] < x {
-			jj++
-		}
-		if V[I[i]+h] == x {
-			kk++
-		}
-	}
-	jj += start
-	kk += jj
-
-	i = start
-	j = 0
-	k = 0
-	for i < jj {
-		if V[I[i]+h] < x {
-			i++
-		} else if V[I[i]+h] == x {
-			swap(I, i, jj+j)
-			j++
-		} else {
-			swap(I, i, kk+k)
-			k++
-		}
-	}
-
-	for jj+j < kk {
-		if V[I[jj+j]+h] == x {
-			j++
-		} else {
-			swap(I, jj+j, kk+k)
-			k++
-		}
-	}
-
-	if jj > start {
-		split(I, V, start, jj-start, h)
-	}
-
-	for i = 0; i < kk-jj; i++ {
-		V[I[jj+i]] = kk - 1
-	}
-	if jj == kk-1 {
-		I[jj] = -1
-	}
-
-	if start+length > kk {
-		split(I, V, kk, start+length-kk, h)
-	}
-}
-
-func qsufsort(obuf []byte) []int {
-	var buckets [256]int
-	var i, h int
-	I := make([]int, len(obuf)+1)
-	V := make([]int, len(obuf)+1)
-
-	for _, c := range obuf {
-		buckets[c]++
-	}
-	for i = 1; i < 256; i++ {
-		buckets[i] += buckets[i-1]
-	}
-	copy(buckets[1:], buckets[:])
-	buckets[0] = 0
-
-	for i, c := range obuf {
-		buckets[c]++
-		I[buckets[c]] = i
-	}
-
-	I[0] = len(obuf)
-	for i, c := range obuf {
-		V[i] = buckets[c]
-	}
-
-	V[len(obuf)] = 0
-	for i = 1; i < 256; i++ {
-		if buckets[i] == buckets[i-1]+1 {
-			I[buckets[i]] = -1
-		}
-	}
-	I[0] = -1
-
-	for h = 1; I[0] != -(len(obuf) + 1); h += h {
-		var n int
-		for i = 0; i < len(obuf)+1; {
-			if I[i] < 0 {
-				n -= I[i]
-				i -= I[i]
-			} else {
-				if n != 0 {
-					I[i-n] = -n
-				}
-				n = V[I[i]] + 1 - i
-				split(I, V, i, n, h)
-				i += n
-				n = 0
-			}
-		}
-		if n != 0 {
-			I[i-n] = -n
-		}
-	}
-
-	for i = 0; i < len(obuf)+1; i++ {
-		I[V[i]] = i
-	}
-	return I
-}
-
 func matchlen(a, b []byte) (i int) {
 	for i < len(a) && i < len(b) && a[i] == b[i] {
 		i++
@@ -158,24 +15,21 @@ func matchlen(a, b []byte) (i int) {
 }
 
 func search(I []int, obuf, nbuf []byte, st, en int) (pos, n int) {
-	if en-st < 2 {
-		x := matchlen(obuf[I[st]:], nbuf)
-		y := matchlen(obuf[I[en]:], nbuf)
-
-		if x > y {
-			return I[st], x
+	for en-st >= 2 {
+		pivot := st + (en-st)/2
+		if bytes.Compare(obuf[I[pivot]:], nbuf) < 0 {
+			st = pivot
 		} else {
-			return I[en], y
+			en = pivot
 		}
 	}
 
-	x := st + (en-st)/2
-	if bytes.Compare(obuf[I[x]:], nbuf) < 0 {
-		return search(I, obuf, nbuf, x, en)
-	} else {
-		return search(I, obuf, nbuf, st, x)
+	x := matchlen(obuf[I[st]:], nbuf)
+	y := matchlen(obuf[I[en]:], nbuf)
+	if x > y {
+		return I[st], x
 	}
-	panic("unreached")
+	return I[en], y
 }
 
 // Diff computes the difference between old and new, according to the bsdiff
@@ -211,7 +65,7 @@ func diffBytes(obuf, nbuf []byte) ([]byte, error) {
 
 func diff(obuf, nbuf []byte, patch io.WriteSeeker) error {
 	var lenf int
-	I := qsufsort(obuf)
+	I := buildSuffixArray(obuf)
 	db := make([]byte, len(nbuf))
 	eb := make([]byte, len(nbuf))
 	var dblen, eblen int
@@ -313,21 +167,26 @@ func diff(obuf, nbuf []byte, patch io.WriteSeeker) error {
 			dblen += lenf
 			eblen += (scan - lenb) - (lastscan + lenf)
 
-			err = binary.Write(pfbz2, signMagLittleEndian{}, int64(lenf))
+			var buf [8]byte
+
+			signMagLittleEndian{}.PutUint64(buf[:], uint64(int64(lenf)))
+			_, err = pfbz2.Write(buf[:])
 			if err != nil {
 				pfbz2.Close()
 				return err
 			}
 
 			val := (scan - lenb) - (lastscan + lenf)
-			err = binary.Write(pfbz2, signMagLittleEndian{}, int64(val))
+			signMagLittleEndian{}.PutUint64(buf[:], uint64(int64(val)))
+			_, err = pfbz2.Write(buf[:])
 			if err != nil {
 				pfbz2.Close()
 				return err
 			}
 
 			val = (pos - lenb) - (lastpos + lenf)
-			err = binary.Write(pfbz2, signMagLittleEndian{}, int64(val))
+			signMagLittleEndian{}.PutUint64(buf[:], uint64(int64(val)))
+			_, err = pfbz2.Write(buf[:])
 			if err != nil {
 				pfbz2.Close()
 				return err
