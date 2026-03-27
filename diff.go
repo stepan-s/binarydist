@@ -14,7 +14,7 @@ func matchlen(a, b []byte) (i int) {
 	return i
 }
 
-func search(I []int, obuf, nbuf []byte, st, en int) (pos, n int) {
+func search(I []int32, obuf, nbuf []byte, st, en int) (pos, n int) {
 	for en-st >= 2 {
 		pivot := st + (en-st)/2
 		if bytes.Compare(obuf[I[pivot]:], nbuf) < 0 {
@@ -27,9 +27,9 @@ func search(I []int, obuf, nbuf []byte, st, en int) (pos, n int) {
 	x := matchlen(obuf[I[st]:], nbuf)
 	y := matchlen(obuf[I[en]:], nbuf)
 	if x > y {
-		return I[st], x
+		return int(I[st]), x
 	}
-	return I[en], y
+	return int(I[en]), y
 }
 
 // Diff computes the difference between old and new, according to the bsdiff
@@ -66,9 +66,7 @@ func diffBytes(obuf, nbuf []byte) ([]byte, error) {
 func diff(obuf, nbuf []byte, patch io.WriteSeeker) error {
 	var lenf int
 	I := buildSuffixArray(obuf)
-	db := make([]byte, len(nbuf))
-	eb := make([]byte, len(nbuf))
-	var dblen, eblen int
+	var db, eb []byte
 
 	var hdr header
 	hdr.Magic = magic
@@ -158,14 +156,11 @@ func diff(obuf, nbuf []byte, patch io.WriteSeeker) error {
 			}
 
 			for i := 0; i < lenf; i++ {
-				db[dblen+i] = nbuf[lastscan+i] - obuf[lastpos+i]
+				db = append(db, nbuf[lastscan+i]-obuf[lastpos+i])
 			}
 			for i := 0; i < (scan-lenb)-(lastscan+lenf); i++ {
-				eb[eblen+i] = nbuf[lastscan+lenf+i]
+				eb = append(eb, nbuf[lastscan+lenf+i])
 			}
-
-			dblen += lenf
-			eblen += (scan - lenb) - (lastscan + lenf)
 
 			var buf [8]byte
 
@@ -214,12 +209,12 @@ func diff(obuf, nbuf []byte, patch io.WriteSeeker) error {
 	if err != nil {
 		return err
 	}
-	n, err := pfbz2.Write(db[:dblen])
+	n, err := pfbz2.Write(db)
 	if err != nil {
 		pfbz2.Close()
 		return err
 	}
-	if n != dblen {
+	if n != len(db) {
 		pfbz2.Close()
 		return io.ErrShortWrite
 	}
@@ -240,12 +235,12 @@ func diff(obuf, nbuf []byte, patch io.WriteSeeker) error {
 	if err != nil {
 		return err
 	}
-	n, err = pfbz2.Write(eb[:eblen])
+	n, err = pfbz2.Write(eb)
 	if err != nil {
 		pfbz2.Close()
 		return err
 	}
-	if n != eblen {
+	if n != len(eb) {
 		pfbz2.Close()
 		return io.ErrShortWrite
 	}

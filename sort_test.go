@@ -12,7 +12,7 @@ var sortT = [][]byte{
 	[]byte("abcdefabcdef"),
 }
 
-func TestQsufsort(t *testing.T) {
+func TestSuffixArray(t *testing.T) {
 	for _, s := range sortT {
 		I := buildSuffixArray(s)
 		for i := 1; i < len(I); i++ {
